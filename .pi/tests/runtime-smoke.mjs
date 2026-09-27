@@ -18,7 +18,16 @@ for(const part of ['extensions','skills','agents'])if(existsSync(join(source,'.p
 writeFileSync(join(cwd,'lesson.md'),'');writeFileSync(join(cwd,'.pi/mdlog.json'),JSON.stringify({file:join(cwd,'lesson.md')}));
 writeFileSync(join(cwd,'.alvar/LEARNER.md'),'# Synthetic learner\nGoal: understand a small filter lab. Knows sums and arrays. Prefers complete explanations, visual maps and three-choice survey questions. No previous mastery is assumed.\n');
 const settings=SettingsManager.inMemory({compaction:{enabled:false},retry:{enabled:false}});settings.setProjectTrusted(true);
-const loader=new DefaultResourceLoader({cwd,agentDir,settingsManager:settings,noContextFiles:true,skillsOverride:base=>({...base,skills:base.skills.filter(s=>s.filePath.startsWith(cwd))})});await loader.reload();
+// Prove that unrelated auto-discovered extensions/skills are excluded by the same profile as pi-learn.
+mkdirSync(join(agentDir,'extensions'));writeFileSync(join(agentDir,'extensions/unrelated.ts'),'throw new Error("Unrelated extension must not load");');
+mkdirSync(join(agentDir,'skills/unrelated'),{recursive:true});writeFileSync(join(agentDir,'skills/unrelated/SKILL.md'),'---\nname: unrelated\ndescription: Must not be advertised\n---\nUnrelated');
+const {learningProfile}=await import(pathToFileURL(join(source,'.pi/learning-profile.mjs')));
+const profile=learningProfile(cwd,agentDir);
+const loader=new DefaultResourceLoader({cwd,agentDir,settingsManager:settings,noContextFiles:true,noExtensions:true,noSkills:true,noPromptTemplates:true,additionalExtensionPaths:profile.extensions,additionalSkillPaths:profile.skills});await loader.reload();
+const actualExtensions=loader.getExtensions().extensions.map(e=>resolve(e.path)).sort();
+if(JSON.stringify(actualExtensions)!==JSON.stringify([...profile.extensions].sort()))throw new Error('Learning profile extension set mismatch');
+const actualSkills=loader.getSkills().skills.map(s=>resolve(s.filePath)).sort();
+if(JSON.stringify(actualSkills)!==JSON.stringify([...profile.skills].sort()))throw new Error('Learning profile skill set mismatch');
 const loaded=loader.getExtensions();
 const sourceHashes={};for(const file of readdirSync(join(cwd,".pi"),{recursive:true}).sort()){const name=String(file);try{const bytes=readFileSync(join(cwd,".pi",name));if(name!=="mdlog.json")sourceHashes[name]=createHash("sha256").update(bytes).digest("hex");}catch(error){if(error.code!=="EISDIR")throw error;}}
 const report={piVersion:JSON.parse(readFileSync(join(dirname(sdkPath),'../package.json'),'utf8')).version,provider,model:modelId,thinking,extensions:loaded.extensions.map(e=>e.path.replace(cwd,'<vault>')),sourceHashes,errors:loaded.errors,skills:loader.getSkills().skills.map(s=>s.name),root};

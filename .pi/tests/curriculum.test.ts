@@ -76,3 +76,80 @@ test("a fresh survey includes overdue branches without erasing prior evidence",(
 
 
 test("explanation without a question directs the tutor to instruction without fabricating evidence",async()=>{const s=setup();const h=harness(s);await expect(h.call("learning-record",{kind:"assistance",skill:"a",summary:"A demo"},"bad-help")).rejects.toThrow("use kind=instruction");await h.call("learning-record",{kind:"instruction",skill:"a",family:"filters",mode:"worked",summary:"A demo of delay",verification:"checked against array"},"demo");expect(s.state().skills).toEqual({});expect(s.state().recentInstructions).toHaveLength(1);});
+
+test("dont-know is explicit in model-visible results for both quiz formats",async()=>{
+ const s=setup(),h=harness(s);h.ctx.ui.editor=async()=>"не знаю";
+ const open=await h.call("quiz-open",{question:"Explain",task},"unknown-open");
+ expect(open.content[0].text).toContain("responseId: unknown-open");expect(open.content[0].text).toContain("outcome: dont_know");
+ h.ctx.ui.custom=async()=>({dontKnow:true,note:"",answers:[]});
+ const closed=await h.call("quiz",choice,"unknown-choice");
+ expect(JSON.parse(closed.content[0].text)).toMatchObject({responseId:"unknown-choice",outcome:"dont_know"});
+ const result=await h.call("learning-assess",{responseId:"unknown-open",result:"uncertain",reasoning:"unobserved",nextCheck:"clarify prerequisites"},"review-unknown");
+ expect(result.details.context.pendingAssessments).toEqual(["unknown-choice"]);
+});
+
+test("one conversation review registers, assesses and resolves help with fresh context",async()=>{
+ const s=setup();survey(s);s.observe("actual","The output is the sum divided by three.");
+ s.record("help","support",{supportStatus:"active",trigger:"help_requested",focus:"mean",basis:"requested example",nextStep:"explain"});
+ const h=harness(s),request={messageId:"utterance:actual",question:"Explain the mean",excerpt:"sum divided by three",task:{...task,mode:"completion",assistance:"worked"},assessment:{result:"correct",reasoning:"sound",nextCheck:"new independent case"},resolveSupport:{basis:"Explained the demonstrated step",nextStep:"Return to survey"}};
+ const result=await h.call("learning-response",request,"combined");
+ expect(result.details.responseId).toBe("combined");expect(result.details.context.pendingAssessments).toEqual([]);
+ expect(result.details.context.support).toMatchObject({supportStatus:"resolved",trigger:"help_requested",focus:"mean"});
+ expect(s.state().skills.a.independent).toBe(false);
+ const count=s.events().length;await h.call("learning-response",request,"combined");expect(s.events()).toHaveLength(count);
+ await expect(h.call("learning-response",{...request,assessment:{...request.assessment,result:"incorrect"}},"combined")).rejects.toThrow("Conflicting review");
+});
+
+test("failed combined review rolls back question, answer, assessment and support",async()=>{
+ const s=setup();s.observe("actual","I think it is three");const h=harness(s),count=s.events().length;
+ const base={messageId:"utterance:actual",question:"Explain",excerpt:"three",task,assessment:{result:"correct",reasoning:"sound",evidence:"invented evidence",nextCheck:"another case"}};
+ await expect(h.call("learning-response",base,"rollback")).rejects.toThrow("Evidence");
+ expect(s.events()).toHaveLength(count);expect(s.questions()).toHaveLength(0);
+ await expect(h.call("learning-response",{...base,assessment:{...base.assessment,evidence:"three"},resolveSupport:{basis:"finished",nextStep:"survey"}},"rollback")).rejects.toThrow("No active support");
+ expect(s.events()).toHaveLength(count);
+ const valid=await h.call("learning-response",{...base,assessment:{...base.assessment,evidence:"three"}},"rollback");
+ expect(valid.details.responseId).toBe("rollback");
+});
+
+test("combined review cannot link a different learner's utterance or close old-session help",async()=>{
+ const s=setup();s.observe("owner","a clear explanation");
+ s.record("guest","context",{learnerId:"guest",subject:"Signals",topic:"Filters",goal:"Understand the lab"});
+ const h=harness(s),count=s.events().length;
+ await expect(h.call("learning-response",{messageId:"utterance:owner",question:"Explain",excerpt:"clear",task,assessment:{result:"correct",reasoning:"sound",nextCheck:"transfer"}},"leak")).rejects.toThrow("observed user message");
+ expect(s.events()).toHaveLength(count);
+ s.record("help","support",{supportStatus:"active",trigger:"help_requested",focus:"a",basis:"help",nextStep:"example"});
+ s.record("fresh","session",{stage:"review",questionFormat:"open",scopeSkills:[]});
+ await expect(h.call("learning-record",{kind:"support",supportStatus:"resolved",basis:"done",nextStep:"continue"},"stale")).rejects.toThrow("No active support");
+});
+
+test("inferred assessment returns its actual responseId and context without a follow-up read",async()=>{
+ const s=setup(),h=harness(s);s.question("only",{question:"Explain",mode:"open",task});s.answer("only",{outcome:"pending_review",yourAnswer:"three"});
+ const result=await h.call("learning-assess",{result:"partial",reasoning:"unobserved",nextCheck:"ask why"},"inferred");
+ expect(result.details.responseId).toBe("only");expect(result.details.context.pendingAssessments).toEqual([]);
+ const count=s.events().length;await h.call("learning-assess",{result:"partial",reasoning:"unobserved",nextCheck:"ask why"},"inferred");expect(s.events()).toHaveLength(count);
+});
+
+test("learning-next does not regenerate projection files",async()=>{
+ const s=setup(),h=harness(s);const file=join(s.cwd,".alvar/current.json");writeFileSync(file,"sentinel");
+ await h.call("learning-next",{},"read-only");expect(readFileSync(file,"utf8")).toBe("sentinel");
+});
+
+test("startup injects essential guidance, IDs and only the active learner profile",()=>{
+ const s=setup();cpSync(resolve(import.meta.dir,"../skills"),join(s.cwd,".pi/skills"),{recursive:true});
+ writeFileSync(join(s.cwd,".alvar/LEARNER.md"),"OWNER_PRIVATE_PREFERENCE");
+ s.observe("recent","My actual response");const h=harness(s);const first=h.before().systemPrompt;
+ expect(first).toContain("Учебная среда уже подготовлена");expect(first).toContain("utterance:recent");expect(first).toContain("OWNER_PRIVATE_PREFERENCE");expect(first).toContain("Technique index");
+ s.record("guest","context",{learnerId:"guest",subject:"Signals",topic:"Filters",goal:"Learn"});
+ const second=h.before(first).systemPrompt;
+ expect(second).not.toContain("OWNER_PRIVATE_PREFERENCE");expect(second).not.toContain("utterance:recent");
+ expect(second.split("<learning-turn-policy>")).toHaveLength(2);
+});
+
+test("support closure without repeated trigger or focus can be replayed safely",async()=>{
+ const s=setup(),h=harness(s);
+ s.record("help","support",{supportStatus:"active",trigger:"explanation_confusion",focus:"mean",basis:"confused",nextStep:"example"});
+ const request={kind:"support",supportStatus:"resolved",basis:"step explained",nextStep:"new example"};
+ await h.call("learning-record",request,"close");const count=s.events().length;
+ await h.call("learning-record",request,"close");expect(s.events()).toHaveLength(count);
+ expect(s.activeSupport()).toMatchObject({supportStatus:"resolved",trigger:"explanation_confusion",focus:"mean"});
+});

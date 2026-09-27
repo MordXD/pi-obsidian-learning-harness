@@ -916,9 +916,9 @@ export default function quiz(pi: ExtensionAPI) {
 			const context = params.details?.trim();
 			const respond = (status: string, answer = "", message?: string) => ({
 				content: [{ type: "text" as const, text: status === "pending_review"
-					? `responseId: ${id}\nLearner answer (not graded):\n${answer}\nAssess this responseId with audit of decisive steps before changing topic; a correct number may have incorrect reasoning. For a topic change record disposition=redirect, not a grade.`
-					: message || (status === "dont_know" ? "Learner said they do not know; no guess was made." : "Question cancelled; do not score it.") }],
-				details: { id, responseId: id, status, question, answer, context },
+					? `responseId: ${id}\noutcome: ${status}\nLearner answer (not graded):\n${answer}\nAssess this responseId with audit of decisive steps before changing topic; a correct number may have incorrect reasoning. For a topic change record disposition=redirect, not a grade.`
+					: `responseId: ${id}\noutcome: ${status}\n${message || (status === "dont_know" ? "Learner said they do not know; no guess was made. Assess this responseId as uncertain with reasoning=unobserved; do not invent a cause." : "Question cancelled; do not score it.")}` }],
+				details: { id, responseId: id, status, outcome: status, question, answer, context },
 			});
 			if (!question || !ctx.hasUI) return respond("unavailable", "", "A question and interactive UI are required");
 			return withUILock(async () => {
@@ -1058,7 +1058,7 @@ export default function quiz(pi: ExtensionAPI) {
 					result = unavailableResult(params.question, mode, String(error), correctIndices, context);
 				}
 				const d = result.details;
-                result.content = [{type:"text",text:JSON.stringify({responseId:_toolCallId,status:d.status,correct:d.correct,answer:d.answers.map(a=>a.label),note:d.note || null,feedbackAlreadyShown:true,next:"Assess reasoning separately with learning-assess audit; key match alone is not understanding."})}];
+                result.content = [{type:"text",text:JSON.stringify({responseId:_toolCallId,status:d.status,outcome:d.status === "answered" ? (d.dontKnow ? "dont_know" : d.correct ? "correct" : "incorrect") : d.status,correct:d.correct,answer:d.answers.map(a=>a.label),note:d.note || null,feedbackAlreadyShown:d.status === "answered",next:d.status !== "answered" ? "No submitted answer: do not assess." : d.dontKnow ? "Learner chose dont_know; assess as uncertain with reasoning=unobserved. Do not invent a cause." : "Assess reasoning with learning-assess; key match alone is not understanding."})}];
 				Object.assign(result.details, { id: _toolCallId, responseId: _toolCallId });
 				withStore(ctx.cwd, s => s.answer(_toolCallId, { outcome: d.status === "answered" ? (d.dontKnow ? "dont_know" : d.correct ? "correct" : "incorrect") : d.status, yourAnswer: d.dontKnow ? "Не знаю" : d.answers.map(a => `${a.index}. ${a.label}`).join(", "), note: d.note, isCorrect: d.correct, toolResult: result }));
 				Object.assign(result.details, { id: _toolCallId, responseId: _toolCallId });

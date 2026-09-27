@@ -27,3 +27,15 @@ export const ReasoningAuditSchema = Type.Array(Type.Object({
   expected: Type.String({minLength:1,maxLength:500,description:"Check against problem data: substitution, counterexample, or competing explanation. Not a claim that a source was checked."}),
   verdict: Type.Union(["supported","contradicted","insufficient"].map(v=>Type.Literal(v))),
 }),{minItems:1,maxItems:3,description:"Audit decisive steps before choosing the next topic; internal only. Separate correct result from incorrect reasoning."});
+
+export const AssessmentFields = {
+  diagnosis: Type.Optional(DiagnosisSchema), audit: Type.Optional(ReasoningAuditSchema),
+  result: Type.Union(["correct", "partial", "incorrect", "uncertain"].map(v=>Type.Literal(v))),
+  reasoning: Type.Union(["sound", "partial", "incorrect", "unobserved"].map(v=>Type.Literal(v))),
+  evidence: Type.Optional(Type.String({minLength:1,description:"Exact excerpt, or omit to use the stored answer"})),
+  nextCheck: Type.String({minLength:1}),
+};
+export const ResolveSupportSchema = Type.Object({
+  basis: Type.String({minLength:1,description:"Observed reason for ending local help; does not certify mastery"}),
+  nextStep: Type.String({minLength:1,description:"Substantive next step under the existing session contract"}),
+});

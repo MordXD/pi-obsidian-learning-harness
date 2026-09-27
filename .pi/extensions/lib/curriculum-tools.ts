@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { TaskSchema } from "./tutor-schema";
+import { TaskSchema, AssessmentFields, ResolveSupportSchema } from "./tutor-schema";
 import { withStore } from "./tutor-store";
 import { planHtml } from "./tutor-plan";
 import { saveVisual, readLogTarget } from "./learning";
@@ -21,9 +21,12 @@ export function registerCurriculumTools(pi:ExtensionAPI) {
       const plan=s.plan();if(!plan)throw new Error("No substantive plan: inspect plans/catalog, read process.md, then call learning-plan");const state=s.state();const file=saveVisual(ctx.cwd,"",state.topic||"learning-map","html",planHtml(plan,state.coverage,state.topic||"Карта знаний"));const note=readLogTarget(ctx.cwd);const path=relative(ctx.cwd,file).split(sep).join("/");const markdown='```artifact\nheight='+(p.height??900)+' title="Карта знаний"\n'+path+'\n```';const result={id,file,note,markdown,planVersion:plan.version,delivery:note?"prepared; include in next reply":"no connected note; connect md-log before delivery",instruction:"Include the card and explain why this route addresses the goal. Do not replace it with a list of themes."};s.record(id,"board",{boardId:id,format:"html",file,focus:"Topic map",planVersion:plan.version,request:p,result});return text(result);});
     }
   });
-  pi.registerTool({name:"learning-response",label:"Ответ из разговора",description:"Link an actually observed user message to a task for explicit assessment. Does not grade or repeat the message in the note. Get messageId from learning-next. A complaint or preference is not an answer. Include the assistance actually given.",
-    parameters:Type.Object({messageId:Type.String(),question:Type.String({minLength:1}),excerpt:Type.String({minLength:1}),task:TaskSchema}),
-    async execute(id,p,_s,_u,ctx){return text(withStore(ctx.cwd,s=>s.conversationResponse(id,p.messageId,p.question,p.excerpt,p.task as any)));}
+  pi.registerTool({name:"learning-response",label:"Ответ из разговора",description:"Link an actually observed user message to a task for explicit assessment. Does not grade or repeat the message in the note. Use messageId from injected context or learning-next. Optional assessment and resolveSupport save the entire review atomically and return fresh context; no separate learning-assess is then needed. A complaint or preference is not an answer. Include the assistance actually given.",
+    parameters:Type.Object({messageId:Type.String(),question:Type.String({minLength:1}),excerpt:Type.String({minLength:1}),task:TaskSchema,assessment:Type.Optional(Type.Object(AssessmentFields)),resolveSupport:Type.Optional(ResolveSupportSchema)}),
+    async execute(id,p,_s,_u,ctx){
+      if(p.resolveSupport&&!p.assessment)throw new Error("resolveSupport requires an assessment of the actual response");
+      return text(withStore(ctx.cwd,s=>p.assessment?s.review(id,{conversation:{messageId:p.messageId,question:p.question,excerpt:p.excerpt,task:p.task},assessment:p.assessment,resolveSupport:p.resolveSupport}):s.conversationResponse(id,p.messageId,p.question,p.excerpt,p.task as any)));
+    }
   });
   pi.registerTool({name:"learning-technique",label:"Приём объяснения",description:"Retrieve teaching technique cards when choosing or changing an explanation. Query by observed difficulty or specific T IDs. These are options, not a quota or proof of application. Apply a suitable action and look for its observable effect in the student's response.",
     parameters:Type.Object({query:Type.String({minLength:1}),ids:Type.Optional(Type.Array(Type.String(),{maxItems:4}))}),

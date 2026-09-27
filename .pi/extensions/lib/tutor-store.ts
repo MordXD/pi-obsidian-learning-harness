@@ -19,6 +19,7 @@ function normalizeExcerpt(value: string): string {
 }
 export class TutorStore {
   db: any;
+  private batching = false;
   private cachedSeq = -1;
   private cachedEvents: any[] = [];
   constructor(public cwd: string) {
@@ -47,14 +48,39 @@ export class TutorStore {
     return this.cachedEvents;
   }
   append(id: string, kind: string, payload: any, at = new Date().toISOString()) {
-    this.db.exec("BEGIN IMMEDIATE");
+    if (!this.batching) this.db.exec("BEGIN IMMEDIATE");
     try {
       const previous = this.db.prepare("SELECT kind,payload FROM events WHERE id=?").get(id);
       if (previous) {
         if (previous.kind !== kind || previous.payload !== JSON.stringify(payload)) throw new Error(`Conflicting event ${id}`);
       } else this.db.prepare("INSERT INTO events(id,kind,at,payload) VALUES(?,?,?,?)").run(id, kind, at, JSON.stringify(payload));
+      if (!this.batching) this.db.exec("COMMIT");
+    } catch (e) { if (!this.batching) this.db.exec("ROLLBACK"); throw e; }
+  }
+  /** One model operation, one durable transaction and one projection. */
+  review(id: string, request: any) {
+    this.db.exec("BEGIN IMMEDIATE"); this.batching=true;
+    let responseId: string;
+    try {
+      const old = this.events().find(e=>e.id===`review:${id}`);
+      if (old) {
+        if (JSON.stringify(old.payload.request)!==JSON.stringify(request) || !this.sameScope(old.payload.scope,this.scope()) || old.payload.scope.goal!==this.scope().goal || old.payload.sessionId!==(this.contract()?.id||null)) throw new Error("Conflicting review request");
+        responseId=old.payload.responseId;
+      } else {
+        if (request.conversation) {
+          const c=request.conversation;
+          this.conversationResponse(id,c.messageId,c.question,c.excerpt,c.task);
+        }
+        responseId=this.assess(id,{...request.assessment,...(request.conversation?{responseId:id}:{})},request.task);
+        if (request.resolveSupport) this.record(id,"support",{supportStatus:"resolved",...request.resolveSupport});
+        this.append(`review:${id}`,"review",{request,responseId,scope:this.scope(),sessionId:this.contract()?.id||null});
+      }
       this.db.exec("COMMIT");
-    } catch (e) { this.db.exec("ROLLBACK"); throw e; }
+    } catch(error) {
+      this.db.exec("ROLLBACK"); this.cachedSeq=-1; throw error;
+    } finally { this.batching=false; }
+    this.project();
+    return {ok:true,responseId,context:this.summary()};
   }
   start() {
     if (!this.events().length && existsSync(join(this.cwd, ".alvar/current.json"))) {
@@ -168,7 +194,7 @@ export class TutorStore {
     if (!q.task) throw new Error("Attach task metadata with learning-record kind=task or pass task inline");
     const actual = [q.answer.yourAnswer, q.answer.note].filter(Boolean).join("\n");
     if (value.evidence && !normalizeExcerpt(actual).includes(normalizeExcerpt(value.evidence))) throw new Error("Evidence must be an exact excerpt; omit evidence to link the full stored response automatically");
-    this.append(`assessment:${id}`, "assessment", { ...value, questionId:q.id, responseId:q.id, evidence:value.evidence || actual.slice(0,240) }); this.project();
+    this.append(`assessment:${id}`, "assessment", { ...value, questionId:q.id, responseId:q.id, evidence:value.evidence || actual.slice(0,240) }); this.project(); return q.id as string;
   }
   record(id: string, kind: string, data: any) {
     const scope = this.scope();
@@ -197,6 +223,12 @@ export class TutorStore {
       if(!data.skill || !data.reason?.trim() || !this.coverageAreas().some((a:any)=>a.skill===data.skill))throw new Error("Survey limit requires an existing area and a reason; it is not an assessment");
     }
     if (kind === "support") {
+      if (data.supportStatus === "resolved" || data.supportStatus === "redirected") {
+        const previous=this.events().find(e=>e.id===`support:${id}`);
+        const active=previous?.payload || this.activeSupport();
+        if (!active || (!previous && active.supportStatus!=="active")) throw new Error("No active support in this session to close");
+        data={trigger:active.trigger,focus:active.focus,...data};
+      }
       if (!scope.topic || scope.mismatch) throw new Error("Support requires context: call learning-record kind=context with learnerId, subject, topic and goal first; fields on kind=support do not switch context");
       if (!["active","resolved","redirected"].includes(data.supportStatus) || !data.focus?.trim() || !data.nextStep?.trim() || !data.basis?.trim()) throw new Error("Support requires status, focus, nextStep and basis");
     }
@@ -341,6 +373,7 @@ export class TutorStore {
     throw new Error("Unknown view");
   }
   project() {
+    if (this.batching) return;
     // Serialize projection writes with event writers; replay repairs a crash after COMMIT.
     this.db.exec("BEGIN IMMEDIATE");
     try {
