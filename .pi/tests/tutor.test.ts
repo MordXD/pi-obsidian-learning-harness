@@ -55,13 +55,15 @@ test("note and recorded topic mismatch is surfaced instead of mixed",()=>{
  question(s,"p1",{...task,skill:"persona:evidence"});answer(s,"p1");assess(s,"p1");
  expect(s.summary().warning).toContain("does not match");
 });
-test("subject without a board frame gets a reminder until one is recorded",()=>{
+test("subject gets a reminder until a prepared board is delivered",()=>{
  const s=setup();
  s.record("c1","context",{topic:"persona",goal:"course"});
  expect(s.summary().boards).toMatchObject({count:0});
- expect(s.summary().boards.reminder).toContain("Mermaid board");
+ expect(s.summary().boards.reminder).toContain("HTML board");
  s.record("b1","board",{boardId:"persona-flow",mermaid:"flowchart LR\n A[\"x\"] --> B[\"y\"]",focus:"active branch"});
- expect(s.summary().boards).toMatchObject({count:1,reminder:null});
+ expect(s.summary().boards.reminder).toContain("not confirmed");
+ s.markDelivered("b1","lesson.md");
+ expect(s.summary().boards).toMatchObject({count:1,deliveredCount:1,reminder:null});
 });
 test("unprobed coverage areas drive diagnosis instead of one found gap",()=>{
  const s=setup();
@@ -117,7 +119,7 @@ test("cyclic and missing prerequisites rejected without replacing map",()=>{
  const s=setup();expect(()=>s.record("bad","coverage",{areas:[{skill:"a",prerequisites:["b"]},{skill:"b",prerequisites:["a"]}]})).toThrow("cycle");expect(()=>s.record("bad2","coverage",{areas:[{skill:"a",prerequisites:["missing"]}]})).toThrow("Missing prerequisite");expect(s.state().coverage).toEqual([]);
 });
 test("repeating an explained case cannot become independent mastery",()=>{
- const s=setup();question(s,"a",{...task,caseId:"same"});answer(s,"a");assess(s,"a");question(s,"b",{...task,caseId:"same"});answer(s,"b");assess(s,"b");expect(s.state().skills.impulse.independent).toBe(false);
+ const s=setup();question(s,"a",{...task,caseId:"same"});answer(s,"a");assess(s,"a");question(s,"b",{...task,caseId:"same"});answer(s,"b");assess(s,"b");expect(s.state().skills.impulse.evidence.at(-1).independent).toBe(false);expect(s.state().skills.impulse.evidence.filter((e:any)=>e.independent)).toHaveLength(1);
 });
 test("compact acknowledgements do not grow with recorded history",()=>{
  const s=setup();for(let i=0;i<24;i++){question(s,"q"+i,{...task,skill:"skill"+i});answer(s,"q"+i);assess(s,"q"+i);}

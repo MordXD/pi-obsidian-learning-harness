@@ -24,7 +24,7 @@ export default function (pi: ExtensionAPI) {
   const quizTargets = new Map<string, string>();
   const askTargets = new Map<string, string>();
   const completedAsks = new Set<string>();
-  let pendingBoard: string | null = null;
+  let pendingBoards: Array<{id:string;markdown:string;note:string|null}> = [];
 
   function append(text: string, file = target): boolean {
     if (!file) return false;
@@ -53,7 +53,7 @@ export default function (pi: ExtensionAPI) {
     quizTargets.clear();
     askTargets.clear();
     completedAsks.clear();
-    pendingBoard = null;
+    pendingBoards = [];
     lastWriteError = "";
     notify = (message, level) => ctx.ui.notify(message, level);
     try {
@@ -69,7 +69,7 @@ export default function (pi: ExtensionAPI) {
     const msg = event.message as { role?: string; content?: unknown; timestamp?: number };
     // A new user turn may change the subject or interrupt an unfinished explanation.
     // Never attach its predecessor's prepared board to the new reply.
-    if (msg.role === "user") pendingBoard = null;
+    if (msg.role === "user") pendingBoards = [];
     if (msg.role !== "user" && msg.role !== "assistant") return;
     let text = extractText(msg.content).trim();
     if (!text) return;
@@ -82,17 +82,19 @@ export default function (pi: ExtensionAPI) {
     const signature = `${target}|${msg.role}|${msg.timestamp ?? 0}|${hash}`;
     if (seen.has(signature)) return;
     let entry = msg.role === "user" ? callout("you", "Ты", text) : text + "\n\n";
-    if (msg.role === "assistant" && pendingBoard) {
-      const board = pendingBoard;
-      pendingBoard = null;
-      // A prepared frame that never reached the reply would be lost for the learner.
-      if (!text.includes("```mermaid")) {
-        entry = `${text}\n\n${board}\n\n`;
-        notify?.("Доска добавлена в конспект автоматически: в ответе не было блока mermaid", "warning");
+    const frames=msg.role==="assistant" ? pendingBoards.filter(f=>f.note===target) : [];
+    for(const frame of frames)if(!text.includes(frame.markdown))entry+=frame.markdown+"\n\n";
+    // Only a successful note append counts as delivery. Keep frames for a retry on failure.
+    if (append(entry)) {
+      seen.add(signature);
+      if(msg.role==="assistant") {
+        for(const frame of frames)if(activeCwd && target) {
+          try {withStore(activeCwd,s=>s.markDelivered(frame.id,target!));}
+          catch(error){notify?.(`Доска записана, но подтверждение доставки не сохранено: ${String(error)}`,"warning");}
+        }
+        pendingBoards=[];
       }
     }
-    // A failed write must not be marked as successfully recorded.
-    if (append(entry)) seen.add(signature);
   });
 
   // Preference/clarification dialogs are tool interactions, not user messages.
@@ -105,9 +107,14 @@ export default function (pi: ExtensionAPI) {
     if (append(callout("question", "Вопрос", [args.question, args.details, options].filter(Boolean).join("\n\n")))) askTargets.set(event.toolCallId, target);
   });
   pi.on("tool_execution_end", event => {
-    if (event.toolName === "learning-board") {
-      const board = (event.result as any)?.details?.markdown;
-      if (typeof board === "string") pendingBoard = board;
+    if (["learning-board","learning-map","html-preview"].includes(event.toolName)) {
+      const details=(event.result as any)?.details;
+      const markdown=details?.markdown || details?.embed;
+      if(typeof markdown==="string" && !event.isError) {
+        const id=details.id || event.toolCallId;
+        pendingBoards=pendingBoards.filter(f=>f.id!==id);
+        pendingBoards.push({id,markdown,note:details.note===undefined?target:details.note});
+      }
       return;
     }
     if (event.toolName !== "ask_user_question" || completedAsks.has(event.toolCallId)) return;
@@ -176,6 +183,7 @@ export default function (pi: ExtensionAPI) {
       try {
         ensureWritableNote(file);
         saveLogTarget(ctx.cwd, file);
+        if(target!==file)pendingBoards=[];
         target = file;
         activeCwd = ctx.cwd;
         withStore(ctx.cwd, s => { s.start(); });
@@ -185,5 +193,5 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
-  pi.on("session_shutdown", () => { target = null; seen.clear(); quizTargets.clear(); pendingBoard = null; notify = undefined; });
+  pi.on("session_shutdown", () => { target = null; seen.clear(); quizTargets.clear(); pendingBoards = []; notify = undefined; });
 }

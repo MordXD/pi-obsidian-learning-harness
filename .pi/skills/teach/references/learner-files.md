@@ -9,15 +9,17 @@ All session state lives in the **learner's working directory**, not in this skil
   evidence.md               # generated internal evidence view
   LEARNER.md                 # how this mind wants to be taught
   graph.md                   # межтемный граф: связи между картами и solid ground
-  maps/<slug>.md             # probe results for one goal
-  sessions/<date>-<slug>.md  # plan + steps + quizzes
+  plans/<hash>.json          # generated versioned plan: thesis, graph, sessions
+  maps-v3/<hash>.md          # generated evidence map
+  maps/<slug>.md             # legacy narrative maps, read when restoring
+  sessions/<date>-<slug>.md  # legacy session plans and source context
 
 ```
 
 Create `.alvar/` on first use. Это внутреннее состояние, не учебный конспект.
 
 Учебные изображения: `visuals/`. Не создавай `.alvar/visuals/` или `.altar/visuals/`.
-Учебный Markdown — фактически читаемая учеником заметка, например `Заметки/Моя тема.md`. Вставляй туда `![подпись](visuals/<файл>.svg)` рядом с объяснением; для заметки в подпапке скорректируй относительный путь. Запись визуала только в служебном журнале недостаточна. Сохраняй в учебной заметке рассуждения ученика, но не технические статусы и операции с файлами.
+Учебный Markdown — фактически читаемая учеником заметка, например `Заметки/Моя тема.md`. По умолчанию включай готовый блок artifact от learning-map/html-preview в ответ; md-log запишет его рядом с объяснением. Mermaid доступен по явной просьбе. Запись визуала только в служебном журнале недостаточна. Сохраняй в учебной заметке рассуждения ученика, но не технические статусы и операции с файлами.
 
 ## Global graph
 
@@ -43,7 +45,7 @@ Read LEARNER.md at the start of every `teach` session. It controls:
 - what they already treat as solid
 - whether they want visuals, mermaid, LaTeX, or a long markdown log
 
-## Map file
+## Legacy map file (read for restoration)
 
 ```markdown
 # Map — <goal>
@@ -66,7 +68,7 @@ Depth: для каждой нити — уровень лестницы (см. p
 - Q1 [line integrals] C — correct
 ```
 
-## Session file
+## Legacy session file (read for restoration)
 
 ```markdown
 # Session — <goal>
@@ -97,12 +99,12 @@ Sessions: 1) A→B · 2) C→…
 - next check:
 ```
 
-Keep these files updated as you go. They are internal persistence, separate from the learner-facing Markdown / Obsidian note.
+Не создавай параллельный журнал оценок по этим старым шаблонам. Сохрани полезную центральную идею, источники и связи при восстановлении через learning-plan. Старые known/edge/unknown остаются историческими заявлениями, а не новыми проверенными результатами.
 
 ## Единая актуальная точка продолжения
 
 Следуй [learning-engine.md](learning-engine.md). Источник событий — `.alvar/learning.sqlite`; `current.json` и `evidence.md` генерируются инструментами. Не обновляй их вручную и не дублируй актуальные оценки в карте. Карты, граф и сессионные планы — содержательный контекст; оценки подтверждаются идентификаторами вопросов в базе.
 
-При возобновлении вызывай `learning-next`, затем читай нужный исторический контекст. Старое ожидание из legacyNeedsReview требует сверки с реальными ответами. Инструмент возвращает отдельно вопросы без ответа и ответы без оценки. Активный учебный Markdown определяется `.pi/mdlog.json`; меняй его через `/md-log`. Автоматический лог уже записывает ответы и объяснения: не добавляй их второй раз вручную.
+При возобновлении вызывай `learning-next`, затем learning-inspect view=plan/catalog/plans и читай нужный исторический контекст. Стабильный topicId и явные aliases связывают переименования; цель меняет договор сессии, не идентичность накопленных знаний. Старое ожидание из legacyNeedsReview требует сверки с реальными ответами. Инструмент возвращает отдельно вопросы без ответа и ответы без оценки. Активный учебный Markdown определяется `.pi/mdlog.json`; меняй его через `/md-log`. Автоматический лог уже записывает ответы и объяснения: не добавляй их второй раз вручную.
 
 Доски всегда добавляются новым полным кадром рядом с текущим объяснением, даже если повторяют старую схему. Не меняй предыдущие кадры и не проси листать вверх.

@@ -901,7 +901,7 @@ export default function quiz(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Do not include an answer or leading procedure in the prompt when checking independent understanding.",
 			"After submission assess reasoning, not wording; say what follows and where a transition failed. Call learning-assess with returned responseId and a short audit of decisive steps (observed, expected, verdict); evidence is optional. Supply task metadata when asking; use learning-record to attach missing metadata. A pending_review submission is NOT correct or mastered.",
-			"For dont_know teach the missing idea; cancellation says nothing about knowledge. Do not repeat the entire answer when a short focused explanation suffices.",
+			"For dont_know follow the session contract: during survey record the gap, give brief feedback and sample the remaining areas; explain in depth when the learner requests help; cancellation says nothing about knowledge. Do not repeat the entire answer when a short focused explanation suffices.",
 		],
 		parameters: Type.Object({
 			question: Type.String(),
@@ -923,6 +923,8 @@ export default function quiz(pi: ExtensionAPI) {
 			if (!question || !ctx.hasUI) return respond("unavailable", "", "A question and interactive UI are required");
 			return withUILock(async () => {
 				if (signal?.aborted) return respond("cancelled");
+                const contract=withStore(ctx.cwd,s=>s.contract());
+                if(contract?.questionFormat==="choice")return respond("unavailable","","The learner requested choice questions. Use quiz with the agreed option count; change the contract only when the learner changes the format.");
 				withStore(ctx.cwd, s => { s.start(); s.question(id, { question, context, mode: "open", task: params.task, replacesQuestionId: params.resumeQuestionId }); });
 				pi.events.emit("mdlog:quiz-question", { id, question, context, mode: "open" });
 				try {
@@ -958,7 +960,7 @@ export default function quiz(pi: ExtensionAPI) {
 			"Use quiz-open for independent written reasoning, derivations, predictions or error analysis without answer choices. It returns an ungraded submission; assess the reasoning yourself after receiving it.",
 			"Multi-select is graded as an exact-set match: the user is correct only if they select every correct option and no incorrect ones.",
 			"There is no free-text mode. An 'I don't know' choice is ALWAYS added automatically — provide ONLY the real, gradable options (at least two). Never add your own uncertainty/opt-out option like 'I don't know', 'I'm not sure', or 'Not sure'; that is handled for you and a manual one would be redundant or gradable-as-wrong.",
-			"If a result comes back as dontKnow, the user honestly did not know and did NOT guess — treat it as a genuine knowledge gap to teach into, not as a wrong answer.",
+			"If a result comes back as dontKnow, the user honestly did not know and did NOT guess — record missing evidence. In a survey give brief feedback and continue coverage; enter support only for an explicit help request or confusion about your explanation.",
 			"Any answer (right, wrong, or 'I don't know') may carry an optional free-text `note` the user typed in the always-present note field. When present it reflects what they were thinking or unsure about — read it and let it steer your follow-up. It is omitted entirely when empty.",
 			"Distractors suggest possible misconceptions, not certain diagnoses. Read the note or ask the learner to explain before attributing a specific belief.",
 			"Guardrail: every distractor must be unambiguously wrong on the intended reading — tempting, but a real error, not a defensible alternative. Don't drift into trick questions.",
@@ -1031,10 +1033,9 @@ export default function quiz(pi: ExtensionAPI) {
 
 			return withUILock(async () => {
 				if (signal?.aborted) return cancelledResult(params.question, mode, correctIndices, context);
-                if (params.task?.mode === "independent") {
-                  const policy = withStore(ctx.cwd, s => s.summary());
-                  if (policy.quizPolicy.startsWith("Use a NEW open case")) return unavailableResult(params.question,mode,"Switch to quiz-open with a new case: easy recognition has already been demonstrated.",correctIndices,context);
-                }
+                const contract = withStore(ctx.cwd, s => s.contract());
+                if(contract?.questionFormat === "open") return unavailableResult(params.question,mode,"The learner requested open questions. Use quiz-open; change the contract only when the learner changes the format.",correctIndices,context);
+                if(contract?.questionFormat === "choice" && options.length !== contract.optionCount) return unavailableResult(params.question,mode,`The learner requested ${contract.optionCount} options; preserve the session contract.`,correctIndices,context);
                 const lengths = options.map(o=>o.label.length).sort((a,b)=>a-b);
                 const median = lengths[Math.floor(lengths.length/2)];
                 if (correctIndices.length===1 && options[correctIndices[0]-1].label.length > Math.max(80,median*1.65)) return unavailableResult(params.question,mode,"Answer-length cue: shorten the key, make alternatives comparable, or use quiz-open.",correctIndices,context);

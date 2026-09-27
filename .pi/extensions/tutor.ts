@@ -1,8 +1,10 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { parseSkillBlock, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { withStore } from "./lib/tutor-store";
+import { registerCurriculumTools } from "./lib/curriculum-tools";
+import { createHash } from "node:crypto";
 import { TaskSchema, ReasoningAuditSchema, DiagnosisSchema } from "./lib/tutor-schema";
 const text = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value });
 const CoverageAreaSchema = Type.Object({
@@ -12,10 +14,25 @@ const CoverageAreaSchema = Type.Object({
   note: Type.Optional(Type.String({ minLength: 1 })),
 });
 export default function tutor(pi: ExtensionAPI) {
+  registerCurriculumTools(pi);
+  pi.on("message_end", (event,ctx)=>{
+    const message=event.message as any;
+    if(message.role!=="user")return;
+    let body=typeof message.content==="string"?message.content:(message.content||[]).filter((p:any)=>p.type==="text").map((p:any)=>p.text).join("\n");
+    const parsed=parseSkillBlock(body);if(parsed)body=parsed.userMessage||"";
+    if(!body.trim())return;
+    const id=createHash("sha256").update(`${message.timestamp||0}|${body}`).digest("hex");
+    try {withStore(ctx.cwd,s=>s.observe(id,body));}catch(error){ctx.ui.notify(`Не удалось сохранить реплику: ${String(error)}`,"warning");}
+  });
   pi.on("before_agent_start", (event, ctx) => {
     const path = join(ctx.cwd, ".pi/skills/teach/references/turn-policy.md");
     if (!existsSync(path)) return;
-    const policy = readFileSync(path, "utf8").trim();
+    let policy = readFileSync(path, "utf8").trim();
+    try {
+      const next=withStore(ctx.cwd,s=>s.summary());
+      policy+="\n\nActive learning contract and restoration pointers (internal; do not print):\n"+JSON.stringify({session:next.session,support:next.support,plan:next.plan,warning:next.warning});
+      if((next.plan as any).missing || (next.plan as any).needsReview){const planning=join(ctx.cwd,".pi/skills/teach/references/process.md");if(existsSync(planning))policy+="\n\nPlanning protocol (plan missing or goal changed):\n"+readFileSync(planning,"utf8");}
+    }catch(error){policy+="\nLearning state unavailable: "+String(error)+". Restore context before making knowledge claims.";}
     const base = event.systemPrompt.replace(/\n<learning-turn-policy>[\s\S]*?<\/learning-turn-policy>/g, "");
     return { systemPrompt: `${base}\n<learning-turn-policy>\n${policy}\n</learning-turn-policy>` };
   });
@@ -29,7 +46,7 @@ export default function tutor(pi: ExtensionAPI) {
     async execute(_id, _p, _signal, _update, ctx) { return text(withStore(ctx.cwd,s=>{s.start();return s.summary();})); }
   });
   pi.registerTool({name:"learning-inspect",label:"Учебные данные",description:"Read a specific stored response, full coverage map, subject catalog for the active learner, or last five attempts. Does not expose another learner's answers.",
-    parameters:Type.Object({view:Type.Union(["question","map","catalog","history"].map(v=>Type.Literal(v))),questionId:Type.Optional(Type.String())}),
+    parameters:Type.Object({view:Type.Union(["question","map","catalog","history","plan","plans","session"].map(v=>Type.Literal(v))),questionId:Type.Optional(Type.String())}),
     async execute(_id,p,_s,_u,ctx){return text(withStore(ctx.cwd,s=>s.inspect(p.view,p.questionId)));}
   });
   pi.registerTool({ name: "learning-assess", label: "Оценка рассуждения",
@@ -40,10 +57,16 @@ export default function tutor(pi: ExtensionAPI) {
     async execute(id, p, _signal, _update, ctx) { return text(withStore(ctx.cwd, s => { s.assess(id, p as any, (p as any).task); return s.ack({ responseId: p.responseId || p.questionId, result: p.result }); })); }
   });
   pi.registerTool({ name: "learning-record", label: "Учебные события",
-    description: "Record internal context, task metadata, actual assistance or configurable spacing. Do not narrate bookkeeping. Quiz tools persist questions and answers automatically. Assistance must be recorded when given, before receiving the answer.",
+    description: "Record internal context, task metadata, actual assistance or configurable spacing. Do not narrate bookkeeping. Quiz tools persist questions and answers automatically. Use kind=assistance only for a hint on an existing question: questionId + detail. For an explanation/demo without a current question use kind=instruction: skill, family, mode=worked/explanation, summary, verification. Record help before the learner answers.",
     // Keep a root object: some providers discard properties of a root anyOf.
     parameters: Type.Object({
-      kind: Type.Union(["context", "task", "assistance", "instruction", "schedule", "coverage", "disposition", "support"].map(v => Type.Literal(v))),
+      kind: Type.Union(["context", "task", "assistance", "instruction", "schedule", "coverage", "disposition", "support", "session", "survey-limit"].map(v => Type.Literal(v))),
+      stage: Type.Optional(Type.Union(["survey","teach","review"].map(v=>Type.Literal(v)))),
+      questionFormat: Type.Optional(Type.Union(["choice","open","adaptive"].map(v=>Type.Literal(v)))),
+      optionCount: Type.Optional(Type.Integer({minimum:2,maximum:6})), scopeSkills: Type.Optional(Type.Array(Type.String(),{description:"[] surveys the entire plan"})),
+      trigger: Type.Optional(Type.Union(["help_requested","explanation_confusion"].map(v=>Type.Literal(v)))),
+      replace: Type.Optional(Type.Boolean()), reason: Type.Optional(Type.String({minLength:1})),
+      topicId: Type.Optional(Type.String({minLength:1})), aliases: Type.Optional(Type.Array(Type.String({minLength:1}))),
       supportStatus: Type.Optional(Type.Union(["active","resolved","redirected"].map(v=>Type.Literal(v)))),
       focus: Type.Optional(Type.String({minLength:1,maxLength:300})), nextStep: Type.Optional(Type.String({minLength:1,maxLength:500})), basis: Type.Optional(Type.String({minLength:1,maxLength:500})),
       learnerName: Type.Optional(Type.String()), learnerId: Type.Optional(Type.String({minLength:1,description:"primary learner; separate id for another learner"})), subject: Type.Optional(Type.String({minLength:1})), experience: Type.Optional(Type.String()),
@@ -54,10 +77,11 @@ export default function tutor(pi: ExtensionAPI) {
       mode: Type.Optional(Type.Union([Type.Literal("worked"), Type.Literal("explanation")])),
       summary: Type.Optional(Type.String({minLength:1})), verification: Type.Optional(Type.String({minLength:1})),
       days: Type.Optional(Type.Array(Type.Number({minimum:1}), {minItems:1, maxItems:12})),
-      areas: Type.Optional(Type.Array(CoverageAreaSchema, { minItems: 1, maxItems: 24, description: "Full topic coverage map: every area of the topic with its status. Replaces the previous map for this subject." })),
+      areas: Type.Optional(Type.Array(CoverageAreaSchema, { minItems: 1, maxItems: 80, description: "Full topic coverage map: every area of the topic with its status. Merges areas with the current map. Explicit replace=true and reason are required to remove areas." })),
     }),
     async execute(id, p, _signal, _update, ctx) {
-      const required: Record<string, string[]> = { support:["supportStatus","focus","nextStep","basis"], context:["learnerId","subject","topic","goal"], task:["questionId","task"], assistance:["questionId","detail"], instruction:["skill","family","mode","summary","verification"], schedule:["days"], coverage:["areas"], disposition:["questionId","disposition"] };
+      const required: Record<string, string[]> = { session:["stage","questionFormat","scopeSkills"], "survey-limit":["skill","reason"], support:["supportStatus","focus","nextStep","basis","trigger"], context:["learnerId","subject","topic","goal"], task:["questionId","task"], assistance:["questionId","detail"], instruction:["skill","family","mode","summary","verification"], schedule:["days"], coverage:["areas"], disposition:["questionId","disposition"] };
+      if(p.kind==="assistance" && !p.questionId)throw new Error("assistance requires an existing questionId and detail. For an explanation without a pending question, use kind=instruction with skill, family, mode=worked/explanation, summary and verification.");
       const fields = required[p.kind];
       if (!fields) throw new Error("Unknown learning-record kind");
       for (const key of fields) { const value = (p as any)[key]; if (value === undefined || value === null || typeof value === "string" && !value.trim()) throw new Error(`${p.kind} requires ${key}`); }
@@ -83,7 +107,7 @@ export default function tutor(pi: ExtensionAPI) {
         const before = s.state();
         const sequence = before.boards.count + 1;
         s.record(id, "board", p);
-        return { markdown, focus: p.focus, frame: sequence, subject: before.activeSubject,
+        return { id, markdown, focus: p.focus, frame: sequence, subject: before.activeSubject,
           instruction: "Include this entire frame next to the current explanation. Append only; do not manually write when md-log is active. The learner reads downward: draw a full frame again instead of pointing back up." };
       }));
     }

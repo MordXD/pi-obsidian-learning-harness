@@ -248,8 +248,8 @@ test("obvious answer length cue is rejected before showing UI",async()=>{
 test("HTML artifacts use vault paths and append new cards without replacing previous files", async()=>{
  const h=harness();const note=join(h.ctx.cwd,"nested/lesson.md");saveLogTarget(h.ctx.cwd,note);
  visualsExtension(h.pi as any);logExtension(h.pi as any);h.fire("session_start");
- const first=await h.call("html-preview",{title:'Доска "A"',html:"<!doctype html><html><body>First</body></html>",height:600});
- const second=await h.call("html-preview",{title:'Доска "A"',html:"<!doctype html><html><body>Second</body></html>"});
+ const first=await h.call("html-preview",{title:'Доска "A"',html:"<!doctype html><html><body>First</body></html>",height:600},"html-first");
+ const second=await h.call("html-preview",{title:'Доска "A"',html:"<!doctype html><html><body>Second</body></html>"},"html-second");
  expect(first.details.embed).toContain('```artifact\nheight=600 title="Доска  A"\nvisuals/');
  expect(first.details.embed).not.toContain("../");expect(first.details.note).toBe(note);
  h.fire("message_end",{message:{role:"assistant",timestamp:10,content:first.details.embed+"\nExplanation"}});

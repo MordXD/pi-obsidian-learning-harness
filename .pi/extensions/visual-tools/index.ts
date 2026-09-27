@@ -1,4 +1,5 @@
 /** Teaching visuals: visible visuals/ folder, versioned filenames, Markdown embeds. */
+import { withStore } from "../lib/tutor-store";
 import { relative, sep } from "node:path";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -40,7 +41,7 @@ export default function (pi: ExtensionAPI) {
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: "Ошибка: содержимое не похоже на SVG (нет тега <svg>). Отдай полный SVG-код.",
             },
           ],
@@ -53,13 +54,13 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: embed
               ? `SVG сохранён: ${file}\nУчебная заметка: ${note}\nВставь рядом с объяснением (без блока кода):\n${embed}\nПроверь, что эта вставка записалась в учебную заметку.`
               : `SVG сохранён: ${file}\nУчебная заметка не подключена. Подключи её через /md-log; вычисли путь относительно заметки и вставь изображение через ![подпись](путь).`,
           },
         ],
-        details: { file, note, embed },
+        details: { id:_toolCallId, file, note, embed },
       };
     },
   });
@@ -72,12 +73,14 @@ export default function (pi: ExtensionAPI) {
     parameters: HtmlPreviewParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const previous=withStore(ctx.cwd,s=>s.events().find((e:any)=>e.id===`board:${_toolCallId}`)?.payload);
+      if(previous?.result){if(JSON.stringify(previous.request)!==JSON.stringify(params))throw new Error("Conflicting visual request");return previous.result;}
       const { title, html, sub } = params;
       if (!/<!doctype html|<!DOCTYPE html|<html[\s>]/i.test(html)) {
         return {
           content: [
             {
-              type: "text",
+              type: "text" as const,
               text: "Ошибка: содержимое не похоже на HTML-документ. Отдай полный документ с <html>.",
             },
           ],
@@ -89,15 +92,17 @@ export default function (pi: ExtensionAPI) {
       const vaultPath = relative(ctx.cwd, file).split(sep).join("/");
       const safeTitle = title.replace(/["<>\r\n`]/g, " ").trim();
       const embed = '```artifact\nheight=' + (params.height ?? 560) + ' title="' + safeTitle + '"\n' + vaultPath + '\n```';
-      return {
+      const result = {
         content: [
           {
-            type: "text",
+            type: "text" as const,
             text: JSON.stringify({ file, note, embed, instruction: note ? "Вставь этот блок artifact в обычный ответ рядом с объяснением. md-log запишет его; не дублируй запись вручную. Проверь вставку в заметке." : "Заметка не подключена: подключи /md-log и включи блок artifact в ответ. Пока сохранён только HTML." }),
           },
         ],
-        details: { file, note, embed },
+        details: { id:_toolCallId, file, note, embed },
       };
+      withStore(ctx.cwd,s=>s.record(_toolCallId,"board",{boardId:_toolCallId,format:"html",file,focus:title,request:params,result}));
+      return result;
     },
   });
 
