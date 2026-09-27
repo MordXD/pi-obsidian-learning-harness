@@ -1,0 +1,15 @@
+body {
+    --file-line-width: 95% !important;
+}
+
+.markdown-preview-view.is-readable-line-width .markdown-preview-sizer,
+.markdown-source-view.is-readable-line-width .cm-sizer {
+    max-width: 95% !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+/* Для редактора (режим редактирования) */
+.cm-content {
+    max-width: 95% !important;
+}

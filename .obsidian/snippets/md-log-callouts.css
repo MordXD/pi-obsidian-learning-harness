@@ -1,0 +1,32 @@
+/* md-log callouts — цвета плашек журнала обучения.
+   Включить: Obsidian → Settings → Appearance → CSS snippets → md-log-callouts. */
+
+.callout[data-callout="pi"] {
+  --callout-color: 64, 224, 208; /* бирюзовая */
+  --callout-icon: lucide-bot;
+}
+
+.callout[data-callout="you"] {
+  --callout-color: 128, 128, 128; /* серая */
+  --callout-icon: lucide-user;
+}
+
+.callout[data-callout="quiz"] {
+  --callout-color: 255, 200, 0; /* жёлтая */
+  --callout-icon: lucide-help-circle;
+}
+
+.callout[data-callout="correct"] {
+  --callout-color: 80, 200, 120; /* зелёная */
+  --callout-icon: lucide-check;
+}
+
+.callout[data-callout="incorrect"] {
+  --callout-color: 240, 100, 100; /* красная */
+  --callout-icon: lucide-x;
+}
+
+.callout[data-callout="skill"] {
+  --callout-color: 156, 132, 255; /* индиго */
+  --callout-icon: lucide-puzzle;
+}
